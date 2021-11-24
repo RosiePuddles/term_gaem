@@ -22,12 +22,14 @@ pub struct Grid {
 	grid: Vec<Vec<Option<Node>>>,
 	width: usize,
 	height: usize,
+	console: [Option<String>; 3],
+	console_is_err: [bool; 3],
 	resipees: HashMap<u32, Resipee>,
 }
 
 impl Grid {
 	pub fn new(width: usize, height: usize, resipees: HashMap<u32, Resipee>) -> Grid {
-		Grid { grid: vec![vec![None; width + 3]; height + 1], width: width - 1, height: height - 1, resipees }
+		Grid { grid: vec![vec![None; width + 3]; height + 4], width: width - 1, height: height - 1, console: [None, None, None], console_is_err: [false, false, false], resipees }
 	}
 	
 	pub fn set_node(&mut self, x: usize, y: usize, node: Node) -> Result<(), ()> {
@@ -305,6 +307,19 @@ impl Grid {
 		stdout.queue(cursor::MoveTo(0, (self.height + 1) as u16))?
 			.queue(SetForegroundColor(Color::Reset))?
 			.queue(Print(current_command));
+		for console_line in 0..3 {
+			stdout.queue(cursor::MoveToNextLine(1))?
+				.queue(SetForegroundColor(if *self.console_is_err.get(console_line).unwrap() {
+					Color::Red
+				} else {
+					Color::Reset
+				}))?
+				.queue(Print(match self.console.get(console_line).unwrap() {
+					Some(s) => s.clone(),
+					None => String::new()
+				}))?
+				.queue(SetForegroundColor(Color::Reset));
+		}
 		
 		stdout.flush()?;
 		
@@ -332,33 +347,54 @@ impl Grid {
 			'p' => {
 				let cap = match Regex::new(r";(\w+)(\((\w{1,2})\))?").unwrap().captures(&*current_command) {
 					Some(c) => c,
-					None => return
+					None => {
+						self.new_error(format!("Unknown command '{}'", current_command));
+						return
+					}
 				};
 				let node = match &cap[1] {
 					"i" => Node::In(match &cap[3].parse::<u16>() {
 						Ok(v) => Ingredient::u16_to_ing(*v),
-						Err(_) => return
+						Err(_) => {
+							self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
+							return
+						}
 					}),
 					"o" => Node::Out(Ingredient::None),
 					"P" => match &cap[3] {
 						"l" => Node::PowerLeft,
 						"r" => Node::PowerRight,
-						_ => return
+						_ => {
+							self.new_error(format!("Expected either 'l' or 'r'; found '{}'", &cap[3]));
+							return
+						}
 					}
 					"c1" => {
 						match &cap[3].parse::<u8>() {
 							Ok(v) => if v > &0 && v < &3 {
 								Node::Comb1(Ingredient::None, Ingredient::None, Ingredient::None, *v - 1)
-							} else { return },
-							Err(_) => return
+							} else {
+								self.new_error(format!("Comb1 has a max level of level 2. Given level {}", v));
+								return
+							},
+							Err(_) => {
+								self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
+								return
+							}
 						}
 					}
 					"c2" => {
 						match &cap[3].parse::<u8>() {
 							Ok(v) => if v > &0 && v < &3 {
 								Node::Comb2(Ingredient::None, Ingredient::None, Ingredient::None, *v - 1)
-							} else { return },
-							Err(_) => return
+							} else {
+								self.new_error(format!("Comb2 has a max level of level 2. Given level {}", v));
+								return
+							},
+							Err(_) => {
+								self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
+								return
+							}
 						}
 					}
 					"s" => Node::Split(Ingredient::None, false),
@@ -369,15 +405,27 @@ impl Grid {
 						"ld" => 2,
 						"dr" => 3,
 						"ur" => 4,
-						_ => return
+						_ => {
+							self.new_error(format!("Unknown pipe code '{}'", &cap[3]));
+							return
+						}
 					}),
-					_ => return
+					_ => {
+						self.new_error(format!("Unknown command '{}'", current_command));
+						return
+					}
 				};
 				self.place(node);
 			}
 			'd' => { self.delete(); },
-			_ => {}
+			'i' => { self.info(); },
+			_ => self.new_error(format!("Unknown command '{}'", current_command))
 		}
+	}
+	
+	fn new_error(&mut self, err: String) {
+		self.console = [Some(err), self.console.get(0).unwrap().clone(), self.console.get(1).unwrap().clone()];
+		self.console_is_err = [true, self.console_is_err.get(0).unwrap().clone(), self.console_is_err.get(1).unwrap().clone()];
 	}
 	
 	fn place(&mut self, node: Node) -> result<()> {
@@ -417,7 +465,7 @@ impl Grid {
 					_ => {}
 				}
 			}
-			self.print_to_stdout(String::new());
+			self.print_to_stdout(String::new())?;
 			let mut stdout = stdout();
 			stdout.queue(cursor::MoveTo(2 * x, y))?;
 			stdout.flush()?
@@ -484,6 +532,54 @@ impl Grid {
 									None => {}
 								}
 								self.update(x as usize, y as usize);
+								execute!(stdout, cursor::Hide)?;
+								break
+							}
+							KeyCode::Esc => {
+								execute!(stdout, cursor::Hide)?;
+								break
+							}
+							_ => {}
+						}
+					}
+					_ => {}
+				}
+			}
+			stdout.queue(cursor::MoveTo(2 * x, y))?;
+			stdout.flush()?
+		}
+		Ok(())
+	}
+	
+	fn info(&mut self) -> result<()> {
+		let mut stdout = stdout();
+		execute!(stdout, Show)?;
+		let mut x = 0u16;
+		let mut y = 0u16;
+		loop {
+			if poll(Duration::from_millis(500))? {
+				match read()? {
+					Event::Key(key) => {
+						match key.code {
+							KeyCode::Left => if x != 0 {
+								x -= 1
+							}
+							KeyCode::Right => if x != (self.width - 1) as u16 {
+								x += 1
+							}
+							KeyCode::Up => if y != 0 {
+								y -= 1
+							}
+							KeyCode::Down => if y != self.height as u16 {
+								y += 1
+							}
+							KeyCode::Enter => {
+								self.console = [Some(match self.get_node_at_pos(x as usize, y as usize) {
+									Some(n) => n.info(self.resipees.clone()),
+									None => String::from("No node")
+								})
+									, self.console.get(0).unwrap().clone(), self.console.get(1).unwrap().clone()];
+								self.console_is_err = [false, self.console_is_err.get(0).unwrap().clone(), self.console_is_err.get(1).unwrap().clone()];
 								execute!(stdout, cursor::Hide)?;
 								break
 							}

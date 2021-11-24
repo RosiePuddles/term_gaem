@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
+
 use crossterm::style::Color;
+
 use crate::resipee::{Ingredient, Resipee, resipee_hash};
 
 #[derive(Copy, Clone)]
@@ -52,18 +54,58 @@ impl Node {
 		}
 	}
 	
+	pub fn info(&self, resipees: HashMap<u32, Resipee>) -> String {
+		match self {
+			Node::In(i) => format!("Input node. Input: {:?}", i),
+			Node::Out(i) => format!("Output node. Output: {:?}", i),
+			Node::PowerRight => String::from("Power right node"),
+			Node::PowerLeft => String::from("Power left node"),
+			Node::Comb1(i1, i2, i3, level) | Node::Comb2(i1, i2, i3, level) =>
+				format!("Comb{} node. In top: {:?}, in left: {:?}, in bottom: {:?}, level: {}, output: {:?}",
+						match self {
+							Node::Comb1(_, _, _, _) => 1,
+							_ => 2
+						}, i1, i2, i3, level, match resipees.get(&resipee_hash(self, &[*i1, *i2, *i3])) {
+						Some(r) => {
+							if *level >= r.machine.min_level {
+								r.output
+							} else {
+								Ingredient::None
+							}
+						}
+						None => Ingredient::None
+					}),
+			Node::Split(i, p) => format!("Split node ({}powered). Input: {:?}", if *p { "un" } else { "" }, i),
+			Node::Merge(i, p) => format!("Merge node ({}powered). Output: {:?}", if *p { "un" } else { "" }, i),
+			Node::Pipe(i, style) => format!("Pipe node. Carrying: {:?}, type: {}({})", i, match *style {
+				0 => "lr",
+				1 => "lu",
+				2 => "ld",
+				3 => "dr",
+				4 => "ur",
+				_ => unreachable!()
+			}, style)
+		}
+	}
+	
 	pub fn get_ingredient(&self, resipees: HashMap<u32, Resipee>) -> Ingredient {
 		match self {
 			Node::In(i) => *i,
 			Node::Out(i) => *i,
 			Node::PowerRight => Ingredient::None,
 			Node::PowerLeft => Ingredient::None,
-			Node::Comb1(i0, i1, i2, _) | Node::Comb2(i0, i1, i2, _) => {
+			Node::Comb1(i0, i1, i2, l) | Node::Comb2(i0, i1, i2, l) => {
 				match resipees.get(&resipee_hash(self, &[*i0, *i1, *i2])) {
-					Some(r) => r.output,
+					Some(r) => {
+						if *l >= r.machine.min_level {
+							r.output
+						} else {
+							Ingredient::None
+						}
+					}
 					None => Ingredient::None
 				}
-			},
+			}
 			Node::Split(i, _) => *i,
 			Node::Merge(i, _) => *i,
 			Node::Pipe(i, _) => *i

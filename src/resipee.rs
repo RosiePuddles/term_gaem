@@ -17,7 +17,7 @@ pub struct Resipee {
 #[derive(Copy, Clone)]
 pub struct MachineRequirement {
 	machine: Node,
-	min_level: u8,
+	pub min_level: u8,
 }
 
 pub fn resipee_hash(machine: &Node, ings: &[Ingredient; 3]) -> u32 {
