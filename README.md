@@ -47,6 +47,12 @@ Place a node with optional arguments.
 ## `:d`
 Delete a node
 
+## `:i`
+Get info on a selected node
+
+## `:r;<index>`
+Get the resipee for the specified ingredient
+
 ## `:q`
 quit (exit code 0)
 

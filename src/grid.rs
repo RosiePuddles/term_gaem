@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use crossterm::{
 	cursor::{self, Show},
-	ExecutableCommand, execute, QueueableCommand, Result as result,
-	style::{Print, SetForegroundColor, Color, SetBackgroundColor},
+	event::{Event, KeyCode, poll, read}, ExecutableCommand, execute, QueueableCommand,
+	Result as result,
+	style::{Color, Print, SetBackgroundColor, SetForegroundColor},
 	terminal::{self, LeaveAlternateScreen},
-	event::{read, KeyCode, Event, poll}
 };
 use enum_iterator::IntoEnumIterator;
 use regex::Regex;
@@ -330,7 +330,7 @@ impl Grid {
 		let mut chars = current_command.chars();
 		match chars.nth(0) {
 			Some(c) => {
-				if c != ':' { return }
+				if c != ':' { return; }
 			}
 			None => return
 		}
@@ -349,57 +349,82 @@ impl Grid {
 					Some(c) => c,
 					None => {
 						self.new_error(format!("Unknown command '{}'", current_command));
-						return
+						return;
 					}
 				};
 				let node = match &cap[1] {
-					"i" => Node::In(match &cap[3].parse::<u16>() {
-						Ok(v) => Ingredient::u16_to_ing(*v),
-						Err(_) => {
-							self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
+					"i" => {
+						if cap.get(3).is_none() {
+							self.new_error("Expected 3 arguments for ':p;i' command".to_string());
 							return
 						}
-					}),
+						Node::In(match &cap[3].parse::<u16>() {
+							Ok(v) => Ingredient::u16_to_ing(*v),
+							Err(_) => {
+								self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
+								return;
+							}
+						})
+					}
 					"o" => Node::Out(Ingredient::None),
-					"P" => match &cap[3] {
-						"l" => Node::PowerLeft,
-						"r" => Node::PowerRight,
-						_ => {
-							self.new_error(format!("Expected either 'l' or 'r'; found '{}'", &cap[3]));
+					"P" => {
+						if cap.get(3).is_none() {
+							self.new_error("Expected 3 arguments for ':p;P' command".to_string());
 							return
+						}
+						match &cap[3] {
+							"l" => Node::PowerLeft,
+							"r" => Node::PowerRight,
+							_ => {
+								self.new_error(format!("Expected either 'l' or 'r'; found '{}'", &cap[3]));
+								return;
+							}
 						}
 					}
 					"c1" => {
+						if cap.get(3).is_none() {
+							self.new_error("Expected 3 arguments for ':p;c1' command".to_string());
+							return
+						}
 						match &cap[3].parse::<u8>() {
 							Ok(v) => if v > &0 && v < &3 {
 								Node::Comb1(Ingredient::None, Ingredient::None, Ingredient::None, *v - 1)
 							} else {
 								self.new_error(format!("Comb1 has a max level of level 2. Given level {}", v));
-								return
+								return;
 							},
 							Err(_) => {
 								self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
-								return
+								return;
 							}
 						}
 					}
 					"c2" => {
+						if cap.get(3).is_none() {
+							self.new_error("Expected 3 arguments for ':p;c2' command".to_string());
+							return
+						}
 						match &cap[3].parse::<u8>() {
 							Ok(v) => if v > &0 && v < &3 {
 								Node::Comb2(Ingredient::None, Ingredient::None, Ingredient::None, *v - 1)
 							} else {
 								self.new_error(format!("Comb2 has a max level of level 2. Given level {}", v));
-								return
+								return;
 							},
 							Err(_) => {
 								self.new_error(format!("Cannot parse '{}' as u16", &cap[3]));
-								return
+								return;
 							}
 						}
 					}
 					"s" => Node::Split(Ingredient::None, false),
 					"m" => Node::Merge(Ingredient::None, false),
-					"p" => Node::Pipe(Ingredient::None, match &cap[3] {
+					"p" => {
+						if cap.get(3).is_none() {
+							self.new_error("Expected 3 arguments for ':p;p' command".to_string());
+							return
+						}
+						Node::Pipe(Ingredient::None, match &cap[3] {
 						"lr" => 0,
 						"lu" => 1,
 						"ld" => 2,
@@ -407,18 +432,45 @@ impl Grid {
 						"ur" => 4,
 						_ => {
 							self.new_error(format!("Unknown pipe code '{}'", &cap[3]));
-							return
+							return;
 						}
-					}),
+					})}
 					_ => {
-						self.new_error(format!("Unknown command '{}'", current_command));
-						return
+						self.new_error(format!("Unknown node command '{}'", current_command));
+						return;
 					}
 				};
 				self.place(node);
 			}
-			'd' => { self.delete(); },
-			'i' => { self.info(); },
+			'd' => { self.delete(); }
+			'i' => { self.info(); }
+			'r' => {
+				match chars.nth(0) {
+					Some(c) => if c != ';' {
+						self.new_error(format!("Expected ';', found {}", c));
+						return;
+					}
+					None => {
+						self.new_error("Expected a ';' after ':r'".to_string());
+						return;
+					}
+				}
+				match chars.as_str().parse::<u16>() {
+					Ok(v) => {
+						let out = Ingredient::u16_to_ing(v);
+						let (ing_vec, mac_req) = out.resipee();
+						let ing_vec = ing_vec.iter().map(|arg| format!("{:?}", arg)).collect::<Vec<String>>();
+						self.new_info(format!("{:?} -> Ingredients: {} | {}", out, ing_vec.join(", "), match mac_req {
+							Some(mr) => format!("{:?}", mr),
+							None => "Base ingredient. Comes form input only".to_string()
+						}))
+					}
+					Err(_) => {
+						self.new_error(format!("Cannot parse '{}' as u16", chars.as_str()));
+						return;
+					}
+				}
+			}
 			_ => self.new_error(format!("Unknown command '{}'", current_command))
 		}
 	}
@@ -426,6 +478,10 @@ impl Grid {
 	fn new_error(&mut self, err: String) {
 		self.console = [Some(err), self.console.get(0).unwrap().clone(), self.console.get(1).unwrap().clone()];
 		self.console_is_err = [true, self.console_is_err.get(0).unwrap().clone(), self.console_is_err.get(1).unwrap().clone()];
+	}
+	fn new_info(&mut self, info: String) {
+		self.console = [Some(info), self.console.get(0).unwrap().clone(), self.console.get(1).unwrap().clone()];
+		self.console_is_err = [false, self.console_is_err.get(0).unwrap().clone(), self.console_is_err.get(1).unwrap().clone()];
 	}
 	
 	fn place(&mut self, node: Node) -> result<()> {
@@ -453,12 +509,12 @@ impl Grid {
 								self.set_node(x as usize, y as usize, node);
 								self.update(x as usize, y as usize);
 								execute!(stdout(), cursor::Hide)?;
-								break
-							},
+								break;
+							}
 							KeyCode::Esc => {
 								execute!(stdout(), cursor::Hide)?;
-								break
-							},
+								break;
+							}
 							_ => {}
 						}
 					}
@@ -533,11 +589,11 @@ impl Grid {
 								}
 								self.update(x as usize, y as usize);
 								execute!(stdout, cursor::Hide)?;
-								break
+								break;
 							}
 							KeyCode::Esc => {
 								execute!(stdout, cursor::Hide)?;
-								break
+								break;
 							}
 							_ => {}
 						}
@@ -574,18 +630,16 @@ impl Grid {
 								y += 1
 							}
 							KeyCode::Enter => {
-								self.console = [Some(match self.get_node_at_pos(x as usize, y as usize) {
+								self.new_info(match self.get_node_at_pos(x as usize, y as usize) {
 									Some(n) => n.info(self.resipees.clone()),
 									None => String::from("No node")
-								})
-									, self.console.get(0).unwrap().clone(), self.console.get(1).unwrap().clone()];
-								self.console_is_err = [false, self.console_is_err.get(0).unwrap().clone(), self.console_is_err.get(1).unwrap().clone()];
+								});
 								execute!(stdout, cursor::Hide)?;
-								break
+								break;
 							}
 							KeyCode::Esc => {
 								execute!(stdout, cursor::Hide)?;
-								break
+								break;
 							}
 							_ => {}
 						}

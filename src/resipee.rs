@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 
 use crossterm::style::Color;
 use enum_iterator::IntoEnumIterator;
@@ -18,6 +19,16 @@ pub struct Resipee {
 pub struct MachineRequirement {
 	machine: Node,
 	pub min_level: u8,
+}
+
+impl Debug for MachineRequirement {
+	fn fmt(&self, f_: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(f_, "machine: {}, min level: {}", match self.machine {
+			Comb1(_, _, _, _) => "Comb1",
+			Comb2(_, _, _, _) => "Comb2",
+			_ => unreachable!()
+		}, self.min_level + 1)
+	}
 }
 
 pub fn resipee_hash(machine: &Node, ings: &[Ingredient; 3]) -> u32 {
@@ -106,6 +117,16 @@ impl Ingredient {
 			Coffee => 'ᄩ',
 			Vodka => 'ᄬ',
 			Cat => 'ᄦ'
+		}
+	}
+	
+	pub fn resipee(&self) -> (Vec<Ingredient>, Option<MachineRequirement>) {
+		match self {
+			None | Pink | Hot | Cold | Cat | Milk | Water => (vec![self.clone()], Option::None),
+			Coffee => (vec![Hot, Water, Milk], Some(MachineRequirement { machine: Comb1(None, None, None, 0), min_level: 0})),
+			Metal => (vec![Coffee, Cat, Pink], Some(MachineRequirement { machine: Comb2(None, None, None, 0), min_level: 0})),
+			OtherMetal => (vec![Metal, Hot], Some(MachineRequirement { machine: Comb1(None, None, None, 0), min_level: 1})),
+			Vodka => (vec![Pink, Cold, Milk], Some(MachineRequirement { machine: Comb1(None, None, None, 0), min_level: 1}))
 		}
 	}
 	
